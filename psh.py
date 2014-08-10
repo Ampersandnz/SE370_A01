@@ -88,30 +88,26 @@ def doSystemCommand(command, arguments):
 			arguments.pop(len(arguments) - 1)
 
 
-
 		#IFF PIPE BEING USED
 		#https://docs.python.org/3/library/subprocess.html#popen-constructor
 #		if (/* piping */):
 #			pipe(fildes)
 #			if (fork() == 0):
-#				# first component of command line
+				# First component of command line
 #				close(stdout)
 #				dup(fildes[1])
 #				close(fildes[1])
 #				close(fildes[0])
-#				# stdout now goes to pipe
-#				# child process does command
+				# Stdout now goes to pipe
+				# Child process does command
 #				execlp(command1, command1, 0)
 #
-#			# second component of command line
+			# Second component of command line
 #			close(stdin);
 #			dup(fildes[0]);
 #			close(fildes[0]);
 #			close(fildes[1]);
-#			# standard input now comes from the pipe
-
-
-
+			# Standard input now comes from the pipe
 
 
 
