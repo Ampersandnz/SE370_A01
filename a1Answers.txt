@@ -1,0 +1,6 @@
+1. Provide your Python code equivalent to the pipeline pseudocode provided on page 2. Under each line
+explain what it is doing and why.
+
+2. In a properly running shell (either yours or bash) if you type cd .. and then type pwd you will see the
+parent directory. However, if you type cd .. | pwd you see the current directory. Explain why this is
+so.

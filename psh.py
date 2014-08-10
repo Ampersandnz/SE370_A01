@@ -89,7 +89,6 @@ def doSystemCommand(command, arguments):
 
 
 		#IFF PIPE BEING USED
-		#https://docs.python.org/3/library/subprocess.html#popen-constructor
 #		if (/* piping */):
 #			pipe(fildes)
 #			if (fork() == 0):
