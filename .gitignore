@@ -60,3 +60,6 @@ test3.txt
 test4.txt
 test5.txt
 test6.txt
+
+#PyCharm files
+.idea
