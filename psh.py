@@ -16,7 +16,7 @@ class Command:
         self.command = command
         self.arguments = arguments
         if len(self.arguments) == 0:
-            self.arguments = [""]
+            self.arguments = ['']
 
     def get_command(self):
         return self.command
@@ -25,7 +25,7 @@ class Command:
         return self.arguments
 
     def get_full_command(self):
-        return self.command + " [" + ', '.join(self.arguments) + "]"
+        return self.command + ' [' + ', '.join(self.arguments) + ']'
 
     def call_again(self):
         do_command(self)
@@ -44,12 +44,13 @@ class CommandHistory:
         self.commandList.pop(index - 1)
 
     def get_command(self, index):
-        return self.commandList[index - 1]
+        if len(self.commandList) >= index:
+            return self.commandList[index - 1]
 
     def print_commands(self):
         for i in range(0, len(self.commandList)):
             if i >= len(self.commandList) - 10:
-                print ("%d: %s" % (i + 1, self.commandList[i].get_full_command()))
+                print ('%d: %s' % (i + 1, ''.join(self.commandList[i].get_arguments())))
 
     @property
     def num_commands(self):
@@ -80,7 +81,7 @@ def intercept_ctrl_z(signum, frame):
     sc_ctrl_z()
 
 # Lists the commands that will be executed by this shell rather than the system.
-shellCommandList = ["pwd", "cd", "h", "history", "bg", "fg", "kill", "q", "quit", "exit", "jobs"]
+shellCommandList = ['pwd', 'cd', 'h', 'history', 'bg', 'fg', 'kill', 'q', 'quit', 'exit', 'jobs']
 
 command_history = CommandHistory()
 #jobs_list = JobsList()
@@ -91,78 +92,123 @@ signal.signal(signal.SIGTSTP, intercept_ctrl_z)
 
 
 # Accepts user input, and runs the commands when they are entered.
+# noinspection PyProtectedMember
 def main():
     while 1:
-        user_input = input('psh> ')
         try:
-            if user_input.strip() != "":
-                do_command(user_input)
-        except FileNotFoundError:
-            print (parse_input(user_input)[0] + ": command not found")
-            # Exit the cloned child process that contained the system call.
-            # Otherwise there would be two running instances of the shell.
-            os._exit(1)
+            user_input = input('psh> ')
+            if user_input.strip() != '':
+                try:
+                    do_command(user_input)
+                except FileNotFoundError:
+                    print (parse_input(user_input)[0] + ': command not found')
+                    # Exit the cloned child process that contained the system call.
+                    # Otherwise there would be two running instances of the shell.
+                    os._exit(1)
         except KeyboardInterrupt:
-            print("")
+            print('')
 
 
 # Saves the user's input in history, parses the string into is separate command[s] and arguments,
 # then determines if a given command with arguments should be executed by the shell or the system.
+# noinspection PyProtectedMember
 def do_command(user_input):
-    command_history.add_command(user_input)
     command_with_args = parse_input(user_input)
     command = Command(command_with_args[0], command_with_args)
-    print (command.get_full_command())
 
-#    if command_with_args[len(command_with_args) - 1] == "&":
+    command_history.add_command(Command(command, command_with_args))
+
+    child_pid = os.fork()
+
+#    if command_with_args[len(command_with_args) - 1] == '&':
 #        command_with_args.pop(len(command_with_args) - 1)
 
-    #Piping in command - multiple commands in succession.
-    if "|" in command_with_args:
+    if child_pid == 0:
+        #Piping in command - multiple commands in succession.
+        if '|' in command_with_args:
 
-        #Returns a list of (command, [arguments], command, [arguments], ...)
-        multiple_commands_with_args = split_by_pipes(command_with_args)
-        pipe_read, pipe_write = os.pipe()
+            #Returns a list of (command, [arguments], command, [arguments], ...)
+            commands_to_pipe = split_by_pipes(command_with_args)
 
-        first_command = Command(multiple_commands_with_args[0], multiple_commands_with_args[1])
-        second_command = Command(multiple_commands_with_args[2], multiple_commands_with_args[3])
+            next_pipe_read, next_pipe_write = os.pipe()
+            first_iteration = True
+            last_iteration = False
 
-        # First component of command line
-        if os.fork() == 0:
-            # Standard output now goes to pipe
-            os.dup2(pipe_write, sys.stdout.fileno())
+            while len(commands_to_pipe) > 1:
+                if len(commands_to_pipe) == 2:
+                    last_iteration = True
 
-            # Child process does command
-            if is_shell_command(first_command):
-                do_shell_command(first_command)
-            else:
-                do_system_command(first_command)
+                pipe_read, pipe_write = os.pipe()
 
-        # Second component of command line
-        # Standard input now comes from the pipe
-        os.dup2(pipe_read, sys.stdin.fileno())
-        if is_shell_command(second_command):
-            do_shell_command(second_command)
+                first_command = commands_to_pipe[0]
+                second_command = commands_to_pipe[1]
+
+                pipe_command_1_pid = os.fork()
+
+                # First component of command line.
+                if pipe_command_1_pid == 0:
+                    # Standard output now goes to pipe.
+                    os.dup2(pipe_write, sys.stdout.fileno())
+
+                    # Get input to this command from the previous pipe in the series.
+                    if not first_iteration:
+                        os.dup2(next_pipe_read, sys.stdin.fileno())
+
+                    # Child process does command
+                    if is_shell_command(first_command):
+                        do_shell_command(first_command)
+                    else:
+                        do_system_command(first_command)
+                    os._exit(0)
+
+                else:
+                    next_pipe_read, next_pipe_write = os.pipe()
+
+                pipe_command_2_pid = os.fork()
+
+                # Second component of command line.
+                if pipe_command_2_pid == 0:
+                    # Standard input now comes from the pipe.
+                    os.dup2(pipe_read, sys.stdin.fileno())
+
+                    # Pipe output of this command as input to the next pipe in the series.
+                    if not last_iteration:
+                        os.dup2(next_pipe_write, sys.stdout.fileno())
+
+                    if is_shell_command(second_command):
+                        do_shell_command(second_command)
+                    else:
+                        do_system_command(second_command)
+                    os._exit(0)
+                else:
+                    first_iteration = False
+                    commands_to_pipe.pop(0)
+
+        #Only one command to execute.
         else:
-            do_system_command(second_command)
+            if is_shell_command(command):
+                do_shell_command(command)
+            else:
+                do_system_command(command)
 
-    #Only one command to execute
-    #else:
-    if is_shell_command(command):
-        do_shell_command(command)
+        # Ensure all child processes terminate rather than returning to the main shell while loop..
+        os._exit(0)
+
     else:
-        do_system_command(command)
+        os.waitpid(child_pid, 0)
+    return
 
 
 # Calls the relevant shell function for this command, passing in its arguments.
 def do_shell_command(command):
     shellCommands[command.get_command()](command.get_arguments())
+    return
 
 
 # Calls the relevant system command, passing in its arguments.
 def do_system_command(command):
     os.execvp(command.get_command(), command.get_arguments())
-    os._exit(1)
+    return
 
 
 # Takes in the full typed string and returns the command split into its component arguments.
@@ -178,23 +224,18 @@ def parse_input(user_input):
 # and splits it into its component commands and their respective sets of arguments.
 def split_by_pipes(command_with_args):
     multiple_commands_with_args = []
-    while "|" in command_with_args:
+    while '|' in command_with_args:
         temp_command_with_args = command_with_args
-        index_of_first_pipe = temp_command_with_args.index("|")
+        index_of_first_pipe = temp_command_with_args.index('|')
 
-        # Get first command.
-        multiple_commands_with_args.append(temp_command_with_args[0])
-
-        # Get its list of arguments (including the command itself).
-        list_of_arguments = command_with_args[0:index_of_first_pipe]
-        multiple_commands_with_args.append(list_of_arguments)
+        # Create Command object of first command, and append it to the list to be returned.
+        multiple_commands_with_args.append(Command(temp_command_with_args[0], command_with_args[0:index_of_first_pipe]))
 
         # Remove first command, its arguments, and the following pipe from the original list of strings.
         del command_with_args[:index_of_first_pipe + 1]
 
     # Add last command and its arguments to the list.
-    multiple_commands_with_args.append(command_with_args.pop(0))
-    multiple_commands_with_args.append(command_with_args)
+    multiple_commands_with_args.append(Command(command_with_args[0], command_with_args))
 
     return multiple_commands_with_args
 
@@ -216,44 +257,33 @@ def sc_cd(arguments):
     if len(arguments) == 1:
         new_path = home_dir
 
-    elif arguments[1].startswith(".."):
-        split_path = os.getcwd().rsplit("/", 1)
-        up_one_level = split_path[0]
+    elif arguments[1].startswith('..'):
+        new_path = arguments[1]
 
-        if up_one_level == "":
-            up_one_level = "/"
-
-        new_path = up_one_level
-
-        if arguments[1] != "..":
-            if new_path == "/":
-                new_path = arguments[1][2:]
-            else:
-                new_path = new_path + arguments[1][2:]
-
-    elif arguments[1].startswith("."):
+    elif arguments[1].startswith('.'):
         add_to_path = (arguments[1])[1:]
         new_path = os.getcwd() + add_to_path
 
-    elif arguments[1].startswith("/"):
+    elif arguments[1].startswith('/'):
         new_path = arguments[1]
 
-    elif arguments[1].startswith("~"):
+    elif arguments[1].startswith('~'):
         new_path = os.path.expanduser(arguments[1])
 
     else:
-        new_path = os.getcwd() + "/" + arguments[1]
+        new_path = os.getcwd() + '/' + arguments[1]
 
     if os.path.isdir(new_path):
         os.chdir(new_path)
     else:
-        print("psh: cd: " + arguments[1] + ": No such file or directory")
+        print('psh: cd: ' + arguments[1] + ': No such file or directory')
+    return
 
 
 # History. With no arguments, returns the last ten commands used.
 # With a numerical argument, calls the command with that index again.
 def sc_h(arguments):
-    if arguments[1] == "":
+    if len(arguments) == 1:
         command_history.print_commands()
     else:
         command = command_history.get_command(int(arguments[1]))
@@ -290,7 +320,12 @@ def sc_ctrl_z():
 def sc_q(arguments):
     if len(arguments) > 1:
         print (' '.join(arguments[1:]))
-    sys.exit()
+    parent_pid = os.getppid()
+  #  p = psutil.Process(parent_pid)
+  #  p.terminate()
+  #  p.kill()
+    os.kill(parent_pid, signal.SIGKILL)
+    os._exit(0)
 
 
 # Lists the current background processes and their states
@@ -312,5 +347,5 @@ shellCommands = {
     shellCommandList[10]: sc_jobs
 }
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
