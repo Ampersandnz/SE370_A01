@@ -137,8 +137,6 @@ def do_command(user_input):
             while len(commands_to_pipe) > 1:
                 if len(commands_to_pipe) == 2:
                     last_iteration = True
-                for c in commands_to_pipe:
-                    print (c.get_full_command())
 
                 pipe_read, pipe_write = os.pipe()
 
@@ -162,6 +160,9 @@ def do_command(user_input):
                     else:
                         do_system_command(first_command)
                     os._exit(0)
+
+                else:
+                    next_pipe_read, next_pipe_write = os.pipe()
 
                 pipe_command_2_pid = os.fork()
 
