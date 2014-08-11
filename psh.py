@@ -50,7 +50,7 @@ class CommandHistory:
     def print_commands(self):
         for i in range(0, len(self.commandList)):
             if i >= len(self.commandList) - 10:
-                print ('%d: %s' % (i + 1, self.commandList[i].get_full_command()))
+                print ('%d: %s' % (i + 1, ''.join(self.commandList[i].get_arguments())))
 
     @property
     def num_commands(self):
@@ -113,10 +113,10 @@ def main():
 # then determines if a given command with arguments should be executed by the shell or the system.
 # noinspection PyProtectedMember
 def do_command(user_input):
-    command_history.add_command(user_input)
-
     command_with_args = parse_input(user_input)
     command = Command(command_with_args[0], command_with_args)
+
+    command_history.add_command(Command(command, command_with_args))
 
     child_pid = os.fork()
 
@@ -168,16 +168,19 @@ def do_command(user_input):
 
     else:
         os.waitpid(child_pid, 0)
+    return
 
 
 # Calls the relevant shell function for this command, passing in its arguments.
 def do_shell_command(command):
     shellCommands[command.get_command()](command.get_arguments())
+    return
 
 
 # Calls the relevant system command, passing in its arguments.
 def do_system_command(command):
     os.execvp(command.get_command(), command.get_arguments())
+    return
 
 
 # Takes in the full typed string and returns the command split into its component arguments.
@@ -246,6 +249,7 @@ def sc_cd(arguments):
         os.chdir(new_path)
     else:
         print('psh: cd: ' + arguments[1] + ': No such file or directory')
+    return
 
 
 # History. With no arguments, returns the last ten commands used.
