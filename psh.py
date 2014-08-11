@@ -129,35 +129,59 @@ def do_command(user_input):
 
             #Returns a list of (command, [arguments], command, [arguments], ...)
             commands_to_pipe = split_by_pipes(command_with_args)
-            for c in commands_to_pipe:
-                print (c.get_full_command())
-            pipe_read, pipe_write = os.pipe()
 
-            first_command = commands_to_pipe[0]
-            second_command = commands_to_pipe[1]
-            
-            pipe_child_pid = os.fork()
+            next_pipe_read, next_pipe_write = os.pipe()
+            first_iteration = True
+            last_iteration = False
 
-            # First component of command line.
-            if pipe_child_pid == 0:
-                # Standard output now goes to pipe.
-                os.dup2(pipe_write, sys.stdout.fileno())
+            while len(commands_to_pipe) > 1:
+                if len(commands_to_pipe) == 2:
+                    last_iteration = True
+                for c in commands_to_pipe:
+                    print (c.get_full_command())
 
-                # Child process does command
-                if is_shell_command(first_command):
-                    do_shell_command(first_command)
+                pipe_read, pipe_write = os.pipe()
+
+                first_command = commands_to_pipe[0]
+                second_command = commands_to_pipe[1]
+
+                pipe_command_1_pid = os.fork()
+
+                # First component of command line.
+                if pipe_command_1_pid == 0:
+                    # Standard output now goes to pipe.
+                    os.dup2(pipe_write, sys.stdout.fileno())
+
+                    # Get input to this command from the previous pipe in the series.
+                    if not first_iteration:
+                        os.dup2(next_pipe_read, sys.stdin.fileno())
+
+                    # Child process does command
+                    if is_shell_command(first_command):
+                        do_shell_command(first_command)
+                    else:
+                        do_system_command(first_command)
+                    os._exit(0)
+
+                pipe_command_2_pid = os.fork()
+
+                # Second component of command line.
+                if pipe_command_2_pid == 0:
+                    # Standard input now comes from the pipe.
+                    os.dup2(pipe_read, sys.stdin.fileno())
+
+                    # Pipe output of this command as input to the next pipe in the series.
+                    if not last_iteration:
+                        os.dup2(next_pipe_write, sys.stdout.fileno())
+
+                    if is_shell_command(second_command):
+                        do_shell_command(second_command)
+                    else:
+                        do_system_command(second_command)
+                    os._exit(0)
                 else:
-                    do_system_command(first_command)
-                os._exit(0)
-
-            # Second component of command line.
-            # Standard input now comes from the pipe.
-            os.dup2(pipe_read, sys.stdin.fileno())
-            if is_shell_command(second_command):
-                do_shell_command(second_command)
-            else:
-                do_system_command(second_command)
-            os._exit(0)
+                    first_iteration = False
+                    commands_to_pipe.pop(0)
 
         #Only one command to execute.
         else:
