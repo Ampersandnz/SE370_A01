@@ -56,24 +56,40 @@ class CommandHistory:
     def num_commands(self):
         return len(self.commandList)
 
+# This class represents a single background process.
+class Job:
+    def __init__(self, pid):
+        self.pid = pid
 
-# # This class manages the list of jobs (background processes).
-# class JobsList:
-#     def __init__(self):
-#         self.jobList = []
-#
-#     def add_job(self, job):
-#         self.jobList.append(job)
-#
-#     def remove_job(self, index):
-#         self.jobList.pop(index - 1)
-#
-#     def get_job(self, index):
-#         return self.jobList[index - 1]
-#
-#     @property
-#     def num_jobs(self):
-#         return len(self.jobList)
+    def get_pid(self):
+        return self.pid
+
+    def get_state(self):
+        # Use provided code to get state of process.
+        return
+
+    def foreground(self):
+        # Bring this process to the foreground.
+        return
+
+
+# This class manages the list of jobs (background processes).
+class JobsList:
+    def __init__(self):
+        self.jobList = []
+
+    def add_job(self, job):
+        self.jobList.append(job)
+
+    def remove_job(self, index):
+        self.jobList.pop(index - 1)
+
+    def get_job(self, index):
+        return self.jobList[index - 1]
+
+    @property
+    def num_jobs(self):
+        return len(self.jobList)
 
 
 # When the key combination CTRL+Z is pressed, the correct shell function is called.
