@@ -128,19 +128,19 @@ def do_command(user_input):
         if '|' in command_with_args:
 
             #Returns a list of (command, [arguments], command, [arguments], ...)
-            multiple_commands_with_args = split_by_pipes(command_with_args)
-            for c in multiple_commands_with_args:
+            commands_to_pipe = split_by_pipes(command_with_args)
+            for c in commands_to_pipe:
                 print (c.get_full_command())
             pipe_read, pipe_write = os.pipe()
 
-            first_command = multiple_commands_with_args[0]
-            second_command = multiple_commands_with_args[1]
-
+            first_command = commands_to_pipe[0]
+            second_command = commands_to_pipe[1]
+            
             pipe_child_pid = os.fork()
 
-            # First component of command line
+            # First component of command line.
             if pipe_child_pid == 0:
-                # Standard output now goes to pipe
+                # Standard output now goes to pipe.
                 os.dup2(pipe_write, sys.stdout.fileno())
 
                 # Child process does command
@@ -148,23 +148,26 @@ def do_command(user_input):
                     do_shell_command(first_command)
                 else:
                     do_system_command(first_command)
+                os._exit(0)
 
-            # Second component of command line
-            # Standard input now comes from the pipe
+            # Second component of command line.
+            # Standard input now comes from the pipe.
             os.dup2(pipe_read, sys.stdin.fileno())
             if is_shell_command(second_command):
                 do_shell_command(second_command)
             else:
                 do_system_command(second_command)
-
             os._exit(0)
 
-        #Only one command to execute
+        #Only one command to execute.
         else:
             if is_shell_command(command):
                 do_shell_command(command)
             else:
                 do_system_command(command)
+
+        # Ensure all child processes terminate rather than returning to the main shell while loop..
+        os._exit(0)
 
     else:
         os.waitpid(child_pid, 0)
