@@ -1,6 +1,57 @@
-1. Provide your Python code equivalent to the pipeline pseudocode provided on page 2. Under each line
-explain what it is doing and why.
+1. 
+user_input = input('psh> ')
+# If the end of the "file" (user input string from standard input [terminal window]) has not been reached, read in the next line.
 
-2. In a properly running shell (either yours or bash) if you type cd .. and then type pwd you will see the
-parent directory. However, if you type cd .. | pwd you see the current directory. Explain why this is
-so.
+	if "&" in user_input:
+		amper = True;
+		# Ampersand in input line, program should be started in the background.
+	else:
+		amper = False;
+		# No ampersand in input line.
+
+	if (is_shell_command):
+	# Perform shell command
+	else:
+	# Pass command to system
+		child_pid = os.fork()
+		if child_pid == 0:
+		# This will return the child process' pid in the parent, and 0 in the child itself.
+			if "|" in user_input
+			# If there is a pipe in the input.
+				pipe_read, pipe_write = os.pipe()
+				# Creates two file descriptors, one for each end of the pipe. 
+				# Read can only be read and write can only be written to.
+					if os.fork() == 0:
+					# Fork the process again (need to run two new programs, one on each side of the pipe, and still keep the original shell running too).
+
+		                os.dup2(pipe_write, sys.stdout.fileno())
+		                # Redirect standard output of the first command to the pipe's write end.
+
+		                # Child process performs the first command.
+		                if is_shell_command(first_command):
+		                    do_shell_command(first_command)
+		                else:
+		                    do_system_command(first_command)
+
+	                else:
+			            os.dup2(pipe_read, sys.stdin.fileno())
+			            # Redirect standard input of the second command to come from the pipe's read end.
+
+			            # Parent (child of terminal) process performs the second command.
+			            if is_shell_command(second_command):
+			                do_shell_command(second_command)
+			            else:
+			                do_system_command(second_command)
+
+            			os._exit(0)
+            			# Ensure that all child processes end after carrying out their functionality - don't want two instances of the terminal running at once.
+    
+	    if not amper:
+	    # If the process is running in the foreground, wait for it to finish before continuing. 
+	    # Don't want the terminal to print its output in the middle of another program's.
+	    	os.waitpid(child_pid)
+	    	# Wait until the process child_pid has finished.
+
+2. Use of the pipe starts the two programs (cd and pwd) in their own subprocesses, then routes the  stream of cd into the input stream of pwd. Since pwd takes no input, its functionality is unchanged and it prints the working directory of its process (same as it was when the process was cloned from the original terminal process). Because cd was also run in its own subprocess, the directory change is not propagated to the processes running the terminal window and the pwd program.
+
+When the pipe is not used, both programs run one after another in the main terminal process. cd changes the working directory, which is then printed by pwd.
