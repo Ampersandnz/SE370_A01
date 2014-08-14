@@ -4,6 +4,9 @@
 # mlo450
 # 5530588
 
+# Resources:
+# https://idea.popcount.org/2012-12-11-linux-process-states/
+
 import os
 import signal
 import shlex
@@ -56,20 +59,30 @@ class CommandHistory:
     def num_commands(self):
         return len(self.commandList)
 
+
 # This class represents a single background process.
 class Job:
-    def __init__(self, pid):
+    def __init__(self, pid, unique_id):
         self.pid = pid
+        self.unique_id = unique_id
 
     def get_pid(self):
         return self.pid
 
-    def get_state(self):
+    def get_unique_id(self):
+        return self.unique_id
+
+    def check_state(self):
         # Use provided code to get state of process.
-        return
+        state = get_state_by_pid(self.pid)
+        return state
 
     def foreground(self):
         # Bring this process to the foreground.
+        return
+
+    def background(self):
+        # Send this process to the background.
         return
 
 
@@ -77,15 +90,25 @@ class Job:
 class JobsList:
     def __init__(self):
         self.jobList = []
+        self.next_unique_id = 1
 
-    def add_job(self, job):
+    def add_job(self, pid):
+        job = Job(pid, self.next_unique_id)
         self.jobList.append(job)
+        self.next_unique_id += 1
+        return job
 
     def remove_job(self, index):
         self.jobList.pop(index - 1)
 
+    def remove_job(self, job):
+        self.jobList.remove(job)
+
     def get_job(self, index):
         return self.jobList[index - 1]
+
+    def get_all_jobs(self):
+        return self.jobList
 
     @property
     def num_jobs(self):
@@ -100,7 +123,7 @@ def intercept_ctrl_z(signum, frame):
 shellCommandList = ['pwd', 'cd', 'h', 'history', 'bg', 'fg', 'kill', 'q', 'quit', 'exit', 'jobs']
 
 command_history = CommandHistory()
-#jobs_list = JobsList()
+job_list = JobsList()
 home_dir = os.getcwd()
 
 # Intercepts CTRL+Z key presses to perform our own functionality, rather than this shell being sent to background.
@@ -112,6 +135,16 @@ signal.signal(signal.SIGTSTP, intercept_ctrl_z)
 def main():
     while 1:
         try:
+            for job in job_list.get_all_jobs():
+                state = job.check_state()
+                if state is None:
+                    job_list.remove_job(job)
+                    print()
+                elif state == 'Z':
+                    os.wait()
+                else:
+                    print("Job[" + str(job.get_pid()) + "] = " + state)
+
             user_input = input('psh> ')
             if user_input.strip() != '':
                 try:
@@ -134,24 +167,28 @@ def do_command(user_input):
 
     command_history.add_command(Command(command, command_with_args))
 
+    amper = '&' in command_with_args
+
+    if amper:
+        # We know there was an ampersand in the input, it doesn't need to be passed in as an argument to a program.
+        command_with_args.pop(len(command_with_args) - 1)
+
     child_pid = os.fork()
 
-#    if command_with_args[len(command_with_args) - 1] == '&':
-#        command_with_args.pop(len(command_with_args) - 1)
-
     if child_pid == 0:
-        #Piping in command - multiple commands in succession.
+        # Piping in command - multiple commands in succession.
         if '|' in command_with_args:
 
-            #Returns a list of (command, [arguments], command, [arguments], ...)
+            # Returns a list of (command, [arguments], command, [arguments], ...)
             commands_to_pipe = split_by_pipes(command_with_args)
 
             next_pipe_read, next_pipe_write = os.pipe()
             first_iteration = True
             last_iteration = False
-
+            print('first iteration')
             while len(commands_to_pipe) > 1:
                 if len(commands_to_pipe) == 2:
+                    print('last iteration')
                     last_iteration = True
 
                 pipe_read, pipe_write = os.pipe()
@@ -178,7 +215,16 @@ def do_command(user_input):
                     os._exit(0)
 
                 else:
+                    print('about to wait for pipe_command_1 process')
+                    for job in job_list.get_all_jobs():
+                        if job.get_pid() == pipe_command_1_pid:
+                            print(job.check_state())
+                    os.wait()
+                    for job in job_list.get_all_jobs():
+                        if job.get_pid() == pipe_command_1_pid:
+                            print(job.check_state())
                     next_pipe_read, next_pipe_write = os.pipe()
+                    print('finished waiting for pipe_command_1 process')
 
                 pipe_command_2_pid = os.fork()
 
@@ -199,6 +245,9 @@ def do_command(user_input):
                 else:
                     first_iteration = False
                     commands_to_pipe.pop(0)
+                    print('about to wait for pipe_command_2 process')
+                    os.wait()
+                    print('finished waiting for pipe_command_2 process')
 
         #Only one command to execute.
         else:
@@ -211,7 +260,11 @@ def do_command(user_input):
         os._exit(0)
 
     else:
-        os.waitpid(child_pid, 0)
+        if amper:
+            job = job_list.add_job(child_pid)
+            print("[" + str(job.get_unique_id()) + "]    " + str(job.get_pid()))
+        else:
+            os.waitpid(child_pid, 0)
     return
 
 
@@ -310,12 +363,14 @@ def sc_h(arguments):
 # Sends a process to the background.
 # NOT YET IMPLEMENTED
 def sc_bg(arguments):
+    #os.kill(process.pid, signal.SIGCONT)
     return arguments
 
 
 # Brings a process to the foreground.
 # NOT YET IMPLEMENTED
 def sc_fg(arguments):
+    #os.kill(process.pid, signal.SIGCONT)
     return arguments
 
 
@@ -329,6 +384,7 @@ def sc_kill(arguments):
 # Forces a process to sleep/wait.
 # NOT YET IMPLEMENTED
 def sc_ctrl_z():
+    #os.kill(process.pid, signal.SIGSTOP)
     return
 
 
@@ -347,6 +403,22 @@ def sc_q(arguments):
 # Lists the current background processes and their states
 def sc_jobs(arguments):
     return arguments
+
+
+# Uses the /proc/pid/state file to find the state of a process.
+def get_state_by_pid(pid):
+    try:
+        for line in open("/proc/%d/status" % pid).readlines():
+            if line.startswith("State:"):
+                # Possible return values:
+                # R = Running
+                # S = Sleeping (Interruptible)
+                # D = Sleeping (Uninterruptible)
+                # Z = Zombie
+                # T = Stopped
+                return line.split(":", 1)[1].strip().split(' ')[0]
+    except FileNotFoundError:
+        return None
 
 # Map the inputs to the function blocks.
 shellCommands = {
