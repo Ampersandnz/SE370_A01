@@ -153,10 +153,13 @@ def main():
             if user_input.strip() != '':
                 try:
                     do_full_command(user_input)
+                # After catching any exception, exit the cloned child process that contained the system call.
+                # Otherwise there would be two running instances of the shell.
                 except FileNotFoundError:
                     print (parse_input(user_input)[0] + ': command not found')
-                    # Exit the cloned child process that contained the system call.
-                    # Otherwise there would be two running instances of the shell.
+                    os._exit(1)
+                except IndexError:
+                    print("Invalid input")
                     os._exit(1)
         except KeyboardInterrupt:
             print('')
@@ -206,68 +209,6 @@ def do_full_command(user_input):
 # This function takes in a list of commands, each of which pipes its output into the next, and calls them.
 def pipe_commands(commands_to_pipe):
 
-    # Keep a single pipe outside the loop, so that each iteration's output
-    # can be piped into the next one's input, if necessary.
-    next_pipe_read, next_pipe_write = os.pipe()
-
-    # Don't want to redirect input of first command in first iteration of loop.
-    first_iteration = True
-    # Don't want to redirect output of last command in last iteration of loop.
-    last_iteration = False
-
-    while len(commands_to_pipe) > 1:
-        # Last iteration is when there are only two commands remaining in the list.
-        if len(commands_to_pipe) == 2:
-            last_iteration = True
-
-        # Create a pipe to redirect the output of command 1 into the input of command 2.
-        pipe_read, pipe_write = os.pipe()
-
-        # Each iteration of the loop only operates on the current first two commands in the list.
-        first_command = commands_to_pipe[0]
-        second_command = commands_to_pipe[1]
-
-        # Fork the process - child will perform command 1, with its output sent to the pipe, then terminate.
-        # Parent will continue through the loop.
-        pipe_command_1_pid = os.fork()
-
-        if pipe_command_1_pid == 0:
-            # Standard output now goes to pipe.
-            os.dup2(pipe_write, sys.stdout.fileno())
-
-            if not first_iteration:
-                # Get input to this command from the previous pipe in the series.
-                os.dup2(next_pipe_read, sys.stdin.fileno())
-
-            # Child process does command
-            do_command(first_command)
-
-        else:
-            # Re-initialise the outside pipe variables.
-            # Otherwise each iteration of the loop will receive the output of all the others,
-            # not just the one preceding it.
-            next_pipe_read, next_pipe_write = os.pipe()
-
-        # Fork the parent process again - this child will perform command 2, with its input read from the pipe,
-        # then terminate.
-        # Parent will again continue through the loop.
-        pipe_command_2_pid = os.fork()
-
-        if pipe_command_2_pid == 0:
-            # Standard input now comes from the pipe.
-            os.dup2(pipe_read, sys.stdin.fileno())
-
-            if not last_iteration:
-                # Pipe output of this command as input to the next pipe in the series.
-                os.dup2(next_pipe_write, sys.stdout.fileno())
-
-            do_command(second_command)
-
-        else:
-            first_iteration = False
-            # First two commands have been executed; remove them from the list.
-            commands_to_pipe.pop(0)
-            commands_to_pipe.pop(0)
 
 
 # Executes a single Command object.
