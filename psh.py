@@ -13,7 +13,8 @@ import shlex
 import sys
 
 
-# This class represents a single command, with arguments.
+# Commands in the CommandHistory list will include pipes, &, and multiple commands.
+# Most Commands used in the program itself will represent a single program execution with arguments.
 class Command:
     def __init__(self, command, arguments):
         self.command = command
@@ -31,7 +32,7 @@ class Command:
         return self.command + ' [' + ', '.join(self.arguments) + ']'
 
     def call_again(self):
-        do_command(self)
+        do_full_command(" ".join(self.arguments))
 
 
 # This class manages the list of recently entered input strings.
@@ -49,6 +50,9 @@ class CommandHistory:
     def get_command(self, index):
         if len(self.commandList) >= index:
             return self.commandList[index - 1]
+
+    def set_command(self, index, command):
+        self.commandList[index - 1] = command
 
     def print_commands(self):
         for i in range(0, len(self.commandList)):
@@ -148,7 +152,7 @@ def main():
             user_input = input('psh> ')
             if user_input.strip() != '':
                 try:
-                    do_command(user_input)
+                    do_full_command(user_input)
                 except FileNotFoundError:
                     print (parse_input(user_input)[0] + ': command not found')
                     # Exit the cloned child process that contained the system call.
@@ -160,7 +164,7 @@ def main():
 
 # Saves the user's input in history, parses the string into is separate command[s] and arguments,
 # then determines if a given command with arguments should be executed by the shell or the system.
-def do_command(user_input):
+def do_full_command(user_input):
     command_with_args = parse_input(user_input)
     command = Command(command_with_args[0], command_with_args)
 
@@ -175,96 +179,104 @@ def do_command(user_input):
     child_pid = os.fork()
 
     if child_pid == 0:
-        # Piping in command - multiple commands in succession.
+        # Pipe(s) exist in command - multiple commands in succession.
         if '|' in command_with_args:
 
-            # Returns a list of (command, [arguments], command, [arguments], ...)
+            # Returns a list of (Command objects)
             commands_to_pipe = split_by_pipes(command_with_args)
+            pipe_commands(commands_to_pipe)
 
-            next_pipe_read, next_pipe_write = os.pipe()
-            first_iteration = True
-            last_iteration = False
-            print('first iteration')
-            while len(commands_to_pipe) > 1:
-                if len(commands_to_pipe) == 2:
-                    print('last iteration')
-                    last_iteration = True
-
-                pipe_read, pipe_write = os.pipe()
-
-                first_command = commands_to_pipe[0]
-                second_command = commands_to_pipe[1]
-
-                pipe_command_1_pid = os.fork()
-
-                # First component of command line.
-                if pipe_command_1_pid == 0:
-                    # Standard output now goes to pipe.
-                    os.dup2(pipe_write, sys.stdout.fileno())
-
-                    # Get input to this command from the previous pipe in the series.
-                    if not first_iteration:
-                        os.dup2(next_pipe_read, sys.stdin.fileno())
-
-                    # Child process does command
-                    if is_shell_command(first_command):
-                        do_shell_command(first_command)
-                    else:
-                        do_system_command(first_command)
-                    os._exit(0)
-
-                else:
-                    print('about to wait for pipe_command_1 process')
-                    # for job in job_list.get_all_jobs():
-                    #     if job.get_pid() == pipe_command_1_pid:
-                    #         print(job.check_state())
-                    os.wait()
-                    # for job in job_list.get_all_jobs():
-                    #     if job.get_pid() == pipe_command_1_pid:
-                    #         print(job.check_state())
-                    next_pipe_read, next_pipe_write = os.pipe()
-                    print('finished waiting for pipe_command_1 process')
-
-                pipe_command_2_pid = os.fork()
-
-                # Second component of command line.
-                if pipe_command_2_pid == 0:
-                    # Standard input now comes from the pipe.
-                    os.dup2(pipe_read, sys.stdin.fileno())
-
-                    # Pipe output of this command as input to the next pipe in the series.
-                    if not last_iteration:
-                        os.dup2(next_pipe_write, sys.stdout.fileno())
-
-                    if is_shell_command(second_command):
-                        do_shell_command(second_command)
-                    else:
-                        do_system_command(second_command)
-                    os._exit(0)
-                else:
-                    first_iteration = False
-                    commands_to_pipe.pop(0)
-                    print('about to wait for pipe_command_2 process')
-                    os.wait()
-                    print('finished waiting for pipe_command_2 process')
+            # Ensure all child processes terminate rather than returning to the main shell while loop..
+            os._exit(0)
 
         #Only one command to execute.
         else:
-            if is_shell_command(command):
-                do_shell_command(command)
-            else:
-                do_system_command(command)
-
-        # Ensure all child processes terminate rather than returning to the main shell while loop..
-        os._exit(0)
+            do_command(command)
 
     else:
         # if amper:
+        #     # Add process child_pid to the list of background jobs.
         #     job = job_list.add_job(child_pid)
         #     print("[" + str(job.get_unique_id()) + "]    " + str(job.get_pid()))
         # else:
             os.waitpid(child_pid, 0)
     return
+
+
+# This function takes in a list of commands, each of which pipes its output into the next, and calls them.
+def pipe_commands(commands_to_pipe):
+
+    # Keep a single pipe outside the loop, so that each iteration's output
+    # can be piped into the next one's input, if necessary.
+    next_pipe_read, next_pipe_write = os.pipe()
+
+    # Don't want to redirect input of first command in first iteration of loop.
+    first_iteration = True
+    # Don't want to redirect output of last command in last iteration of loop.
+    last_iteration = False
+
+    while len(commands_to_pipe) > 1:
+        # Last iteration is when there are only two commands remaining in the list.
+        if len(commands_to_pipe) == 2:
+            last_iteration = True
+
+        # Create a pipe to redirect the output of command 1 into the input of command 2.
+        pipe_read, pipe_write = os.pipe()
+
+        # Each iteration of the loop only operates on the current first two commands in the list.
+        first_command = commands_to_pipe[0]
+        second_command = commands_to_pipe[1]
+
+        # Fork the process - child will perform command 1, with its output sent to the pipe, then terminate.
+        # Parent will continue through the loop.
+        pipe_command_1_pid = os.fork()
+
+        if pipe_command_1_pid == 0:
+            # Standard output now goes to pipe.
+            os.dup2(pipe_write, sys.stdout.fileno())
+
+            if not first_iteration:
+                # Get input to this command from the previous pipe in the series.
+                os.dup2(next_pipe_read, sys.stdin.fileno())
+
+            # Child process does command
+            do_command(first_command)
+
+        else:
+            # Re-initialise the outside pipe variables.
+            # Otherwise each iteration of the loop will receive the output of all the others,
+            # not just the one preceding it.
+            next_pipe_read, next_pipe_write = os.pipe()
+
+        # Fork the parent process again - this child will perform command 2, with its input read from the pipe,
+        # then terminate.
+        # Parent will again continue through the loop.
+        pipe_command_2_pid = os.fork()
+
+        if pipe_command_2_pid == 0:
+            # Standard input now comes from the pipe.
+            os.dup2(pipe_read, sys.stdin.fileno())
+
+            if not last_iteration:
+                # Pipe output of this command as input to the next pipe in the series.
+                os.dup2(next_pipe_write, sys.stdout.fileno())
+
+            do_command(second_command)
+
+        else:
+            first_iteration = False
+            # First two commands have been executed; remove them from the list.
+            commands_to_pipe.pop(0)
+            commands_to_pipe.pop(0)
+
+
+# Executes a single Command object.
+def do_command(command):
+    if is_shell_command(command):
+        do_shell_command(command)
+    else:
+        do_system_command(command)
+    os._exit(0)
 
 
 # Calls the relevant shell function for this command, passing in its arguments.
@@ -355,7 +367,7 @@ def sc_h(arguments):
         command_history.print_commands()
     else:
         command = command_history.get_command(int(arguments[1]))
-        command_history.remove_command(command_history.num_commands)
+        command_history.set_command(command_history.num_commands, command)
         command.call_again()
 
 
@@ -392,9 +404,6 @@ def sc_q(arguments):
     if len(arguments) > 1:
         print (' '.join(arguments[1:]))
     parent_pid = os.getppid()
-  #  p = psutil.Process(parent_pid)
-  #  p.terminate()
-  #  p.kill()
     os.kill(parent_pid, signal.SIGKILL)
     os._exit(0)
 
