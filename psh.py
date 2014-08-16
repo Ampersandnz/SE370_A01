@@ -4,19 +4,26 @@
 # mlo450
 # 5530588
 
+# Resources:
+# https://idea.popcount.org/2012-12-11-linux-process-states/
+
 import os
 import signal
 import shlex
 import sys
 
 
-# This class represents a single command, with arguments.
+# Commands in the CommandHistory list will include pipes, &, and multiple commands.
+# Most Commands used in the program itself will represent a single program execution with arguments.
 class Command:
     def __init__(self, command, arguments):
         self.command = command
         self.arguments = arguments
         if len(self.arguments) == 0:
-            self.arguments = ['']
+            self.arguments = [command]
+        self.fd_in = sys.stdin.fileno()
+        self.fd_out = sys.stdout.fileno()
+        self.is_job = False
 
     def get_command(self):
         return self.command
@@ -24,11 +31,30 @@ class Command:
     def get_arguments(self):
         return self.arguments
 
-    def get_full_command(self):
-        return self.command + ' [' + ', '.join(self.arguments) + ']'
+    def __str__(self):
+        return str(self.command) + ' '.join(self.arguments)
 
-    def call_again(self):
-        do_command(self)
+    def set_fd_in(self, fd_in):
+        self.fd_in = fd_in
+
+    def set_fd_out(self, fd_out):
+        self.fd_out = fd_out
+
+    def set_is_job(self, is_job):
+        self.is_job = is_job
+
+    def execute(self):
+
+        if self.command in shellCommandList:
+            shellCommands[self.command](self.arguments)
+        else:
+            if os.fork() == 0:
+                print('calling command: ' + self.command)
+                os.dup2(self.fd_in, sys.stdin.fileno())
+                os.dup2(self.fd_out, sys.stdout.fileno())
+                os.execvp(self.command, self.arguments)
+            elif not self.is_job:
+                os.wait()
 
 
 # This class manages the list of recently entered input strings.
@@ -47,29 +73,68 @@ class CommandHistory:
         if len(self.commandList) >= index:
             return self.commandList[index - 1]
 
+    def set_command(self, index, command):
+        self.commandList[index - 1] = command
+
     def print_commands(self):
         for i in range(0, len(self.commandList)):
             if i >= len(self.commandList) - 10:
-                print ('%d: %s' % (i + 1, ''.join(self.commandList[i].get_arguments())))
+                print ('%d: %s' % (i + 1, str(self.commandList[i])))
 
     @property
     def num_commands(self):
         return len(self.commandList)
 
 
-# # This class manages the list of jobs (background processes).
+# This class represents a single background process.
+# class Job:
+#     def __init__(self, pid, unique_id):
+#         self.pid = pid
+#         self.unique_id = unique_id
+#
+#     def get_pid(self):
+#         return self.pid
+#
+#     def get_unique_id(self):
+#         return self.unique_id
+#
+#     def check_state(self):
+#         # Use provided code to get state of process.
+#         state = get_state_by_pid(self.pid)
+#         return state
+#
+#     def foreground(self):
+#         # Bring this process to the foreground.
+#         return
+#
+#     def background(self):
+#         # Send this process to the background.
+#         return
+
+
+# This class manages the list of jobs (background processes).
 # class JobsList:
 #     def __init__(self):
 #         self.jobList = []
+#         self.next_unique_id = 1
 #
-#     def add_job(self, job):
+#     def add_job(self, pid):
+#         job = Job(pid, self.next_unique_id)
 #         self.jobList.append(job)
+#         self.next_unique_id += 1
+#         return job
 #
 #     def remove_job(self, index):
 #         self.jobList.pop(index - 1)
 #
+#     def remove_job(self, job):
+#         self.jobList.remove(job)
+#
 #     def get_job(self, index):
 #         return self.jobList[index - 1]
+#
+#     def get_all_jobs(self):
+#         return self.jobList
 #
 #     @property
 #     def num_jobs(self):
@@ -84,7 +149,7 @@ def intercept_ctrl_z(signum, frame):
 shellCommandList = ['pwd', 'cd', 'h', 'history', 'bg', 'fg', 'kill', 'q', 'quit', 'exit', 'jobs']
 
 command_history = CommandHistory()
-#jobs_list = JobsList()
+# job_list = JobsList()
 home_dir = os.getcwd()
 
 # Intercepts CTRL+Z key presses to perform our own functionality, rather than this shell being sent to background.
@@ -96,119 +161,76 @@ signal.signal(signal.SIGTSTP, intercept_ctrl_z)
 def main():
     while 1:
         try:
+            #check_jobs()
+
             user_input = input('psh> ')
             if user_input.strip() != '':
                 try:
-                    do_command(user_input)
+                    do_full_command(user_input)
+                # After catching any exception, exit the cloned child process that contained the system call.
+                # Otherwise there would be two running instances of the shell.
                 except FileNotFoundError:
                     print (parse_input(user_input)[0] + ': command not found')
-                    # Exit the cloned child process that contained the system call.
-                    # Otherwise there would be two running instances of the shell.
-                    os._exit(1)
+                except IndexError:
+                    print("Invalid input")
         except KeyboardInterrupt:
             print('')
+        except EOFError:
+            exit()
 
 
 # Saves the user's input in history, parses the string into is separate command[s] and arguments,
 # then determines if a given command with arguments should be executed by the shell or the system.
-# noinspection PyProtectedMember
-def do_command(user_input):
+def do_full_command(user_input):
     command_with_args = parse_input(user_input)
     command = Command(command_with_args[0], command_with_args)
 
     command_history.add_command(Command(command, command_with_args))
 
-    child_pid = os.fork()
+    amper = '&' in command_with_args
+    piping = '|' in command_with_args
 
-#    if command_with_args[len(command_with_args) - 1] == '&':
-#        command_with_args.pop(len(command_with_args) - 1)
+    if amper:
+        # We know there was an ampersand in the input, it doesn't need to be passed in as an argument to a program.
+        command_with_args.pop(len(command_with_args) - 1)
 
-    if child_pid == 0:
-        #Piping in command - multiple commands in succession.
-        if '|' in command_with_args:
+    # Pipe(s) exist in command - multiple commands in succession.
+    if piping:
 
-            #Returns a list of (command, [arguments], command, [arguments], ...)
+        child_pid = os.fork()
+
+        if child_pid == 0:
+            # Returns a list of (Command objects)
             commands_to_pipe = split_by_pipes(command_with_args)
+            pipe_commands(commands_to_pipe)
 
-            next_pipe_read, next_pipe_write = os.pipe()
-            first_iteration = True
-            last_iteration = False
+        elif not amper:
+            os.wait()
 
-            while len(commands_to_pipe) > 1:
-                if len(commands_to_pipe) == 2:
-                    last_iteration = True
-
-                pipe_read, pipe_write = os.pipe()
-
-                first_command = commands_to_pipe[0]
-                second_command = commands_to_pipe[1]
-
-                pipe_command_1_pid = os.fork()
-
-                # First component of command line.
-                if pipe_command_1_pid == 0:
-                    # Standard output now goes to pipe.
-                    os.dup2(pipe_write, sys.stdout.fileno())
-
-                    # Get input to this command from the previous pipe in the series.
-                    if not first_iteration:
-                        os.dup2(next_pipe_read, sys.stdin.fileno())
-
-                    # Child process does command
-                    if is_shell_command(first_command):
-                        do_shell_command(first_command)
-                    else:
-                        do_system_command(first_command)
-                    os._exit(0)
-
-                else:
-                    next_pipe_read, next_pipe_write = os.pipe()
-
-                pipe_command_2_pid = os.fork()
-
-                # Second component of command line.
-                if pipe_command_2_pid == 0:
-                    # Standard input now comes from the pipe.
-                    os.dup2(pipe_read, sys.stdin.fileno())
-
-                    # Pipe output of this command as input to the next pipe in the series.
-                    if not last_iteration:
-                        os.dup2(next_pipe_write, sys.stdout.fileno())
-
-                    if is_shell_command(second_command):
-                        do_shell_command(second_command)
-                    else:
-                        do_system_command(second_command)
-                    os._exit(0)
-                else:
-                    first_iteration = False
-                    commands_to_pipe.pop(0)
-
-        #Only one command to execute.
-        else:
-            if is_shell_command(command):
-                do_shell_command(command)
-            else:
-                do_system_command(command)
-
-        # Ensure all child processes terminate rather than returning to the main shell while loop..
-        os._exit(0)
-
+    #Only one command to execute.
     else:
-        os.waitpid(child_pid, 0)
+        command.execute()
     return
 
 
-# Calls the relevant shell function for this command, passing in its arguments.
-def do_shell_command(command):
-    shellCommands[command.get_command()](command.get_arguments())
-    return
+# This function takes in a list of commands, each of which pipes its output into the next, and calls them.
+def pipe_commands(commands_to_pipe):
+    old_read = sys.stdin.fileno()
 
+    for command in commands_to_pipe[:-1]:
+        new_read, new_write = os.pipe()
+        command.set_fd_in(old_read)
+        command.set_fd_out(new_write)
+        command.set_is_job(True)
+        command.execute()
 
-# Calls the relevant system command, passing in its arguments.
-def do_system_command(command):
-    os.execvp(command.get_command(), command.get_arguments())
-    return
+        old_read = new_read
+
+    commands_to_pipe[-1].set_is_job(True)
+    commands_to_pipe[-1].set_fd_in(old_read)
+    commands_to_pipe[-1].execute()
+
+    exit()
 
 
 # Takes in the full typed string and returns the command split into its component arguments.
@@ -239,10 +261,16 @@ def split_by_pipes(command_with_args):
 
     return multiple_commands_with_args
 
-
-# Checks if a given command should be executed by this shell, or simply passed on to the system.
-def is_shell_command(command):
-    return command.get_command() in shellCommandList
+#def check_jobs():
+    # for job in job_list.get_all_jobs():
+    #     state = job.check_state()
+    #     if state is None:
+    #         job_list.remove_job(job)
+    #         print()
+    #     elif state == 'Z':
+    #         os.wait()
+    #     else:
+    #         print("Job[" + str(job.get_pid()) + "] = " + state)
 
 
 # Shell command functions follow:
@@ -287,50 +315,69 @@ def sc_h(arguments):
         command_history.print_commands()
     else:
         command = command_history.get_command(int(arguments[1]))
+
+        # Remove the h <num> call from the history list; it will be replaced by the actual command executed.
         command_history.remove_command(command_history.num_commands)
-        command.call_again()
+        command.execute()
 
 
 # Sends a process to the background.
-# NOT YET IMPLEMENTED
 def sc_bg(arguments):
-    return arguments
+    target_pid = os.getpid()
+    if len(arguments) > 1:
+        target_pid = int(arguments[1])
+    os.kill(target_pid, signal.SIGCONT)
 
 
 # Brings a process to the foreground.
-# NOT YET IMPLEMENTED
 def sc_fg(arguments):
-    return arguments
+    target_pid = os.getpid()
+    if len(arguments) > 1:
+        target_pid = int(arguments[1])
+    os.kill(target_pid, signal.SIGCONT)
 
 
 # Forces a process to stop.
-# NOT YET IMPLEMENTED
 def sc_kill(arguments):
-    #os.kill(process.pid, signal.SIGKILL)
-    return arguments
+    target_pid = os.getpid()
+    if len(arguments) > 1:
+        target_pid = int(arguments[1])
+    os.kill(target_pid, signal.SIGKILL)
 
 
 # Forces a process to sleep/wait.
-# NOT YET IMPLEMENTED
 def sc_ctrl_z():
-    return
+    target_pid = os.getpid()
+    job_list.add_job(Job(target_pid))
+    if len(arguments) > 1:
+        target_pid = int(arguments[1])
+    os.kill(target_pid, signal.SIGSTOP)
 
 
 # Quits this shell
 def sc_q(arguments):
-    if len(arguments) > 1:
-        print (' '.join(arguments[1:]))
-    parent_pid = os.getppid()
-  #  p = psutil.Process(parent_pid)
-  #  p.terminate()
-  #  p.kill()
-    os.kill(parent_pid, signal.SIGKILL)
-    os._exit(0)
+    exit()
 
 
 # Lists the current background processes and their states
 def sc_jobs(arguments):
     return arguments
+
+
+# Uses the /proc/pid/state file to find the state of a process.
+def get_state_by_pid(pid):
+    try:
+        for line in open("/proc/%d/status" % pid).readlines():
+            if line.startswith("State:"):
+                # Possible return values:
+                # R = Running
+                # S = Sleeping (Interruptible)
+                # D = Sleeping (Uninterruptible)
+                # Z = Zombie
+                # T = Stopped
+                return line.split(":", 1)[1].strip().split(' ')[0]
+    except FileNotFoundError:
+        return None
 
 # Map the inputs to the function blocks.
 shellCommands = {
