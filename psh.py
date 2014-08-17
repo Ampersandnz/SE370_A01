@@ -79,7 +79,10 @@ class Command:
                 elif self.is_job:
                     job_list.add_job(child_pid, self)
                 else:
+                    print("About to wait for child: " + str(child_pid))
+                    currentlyRunningProcess = child_pid
                     os.wait()
+                    currentlyRunningProcess = None
 
 
 # This class manages the list of recently entered input strings.
@@ -170,11 +173,11 @@ class JobsList:
 
     def print_all_full(self):
         for job in self.job_list:
-            if job is not None and job.get_command() is not None:
-                unique_id = str(job.get_unique_id())
-                process_id = str(job.get_pid())
-                state = job.check_state()
-                command = str(job.get_command())
+            unique_id = str(job.get_unique_id())
+            process_id = str(job.get_pid())
+            state = job.check_state()
+            command = str(job.get_command())
+            if unique_id is not None and process_id is not None and state is not None and command is not None:
                 print ('[' + unique_id + '] : ' + process_id + ' - ' + state + '    ' + command)
 
     @property
@@ -192,6 +195,7 @@ shellCommandList = ['pwd', 'cd', 'h', 'history', 'bg', 'fg', 'kill', 'q', 'quit'
 command_history = CommandHistory()
 job_list = JobsList()
 home_dir = os.getcwd()
+currentlyRunningProcess = None
 
 # Intercepts CTRL+Z key presses to perform our own functionality, rather than this shell being sent to background.
 signal.signal(signal.SIGTSTP, intercept_ctrl_z)
@@ -232,9 +236,10 @@ def check_jobs():
         state = job.check_state()
         if state is None:
             job_list.remove_job(job)
-            print("[" + str(job.get_pid()) + "]+ Done " + str(job.get_command()))
+            print("[" + str(job.get_pid()) + "]+ Done    " + str(job.get_command()))
         elif state is 'Z':
             os.waitpid(job.get_pid(), 0)
+            check_jobs()
 
 
 # Saves the user's input in history, parses the string into is separate command[s] and arguments,
@@ -389,34 +394,38 @@ def sc_h(arguments):
 
 # Sends a process to the background.
 def sc_bg(arguments):
-    target_pid = os.getpid()
+    target_pid = currentlyRunningProcess
     if len(arguments) > 1:
-        print('Argument to bg was: ' + str(arguments[1]))
         target_pid = int(arguments[1])
-    os.kill(target_pid, signal.SIGCONT)
+    if target_pid is not None:
+        os.kill(target_pid, signal.SIGCONT)
 
 
 # Brings a process to the foreground.
 def sc_fg(arguments):
-    target_pid = os.getpid()
+    target_pid = currentlyRunningProcess
     if len(arguments) > 1:
-        print('Argument to fg was: ' + str(arguments[1]))
         target_pid = int(arguments[1])
-    os.kill(target_pid, signal.SIGCONT)
+    if target_pid is not None:
+        os.kill(target_pid, signal.SIGCONT)
 
 
 # Forces a process to stop.
 def sc_kill(arguments):
-    target_pid = os.getpid()
+    target_pid = currentlyRunningProcess
     if len(arguments) > 1:
-        print('Argument to kill was: ' + str(arguments[1]))
         target_pid = int(arguments[1])
-    os.kill(target_pid, signal.SIGKILL)
+    if target_pid is not None:
+        os.kill(target_pid, signal.SIGKILL)
 
 
 # Forces a process to sleep/wait.
 def sc_ctrl_z():
-    os.kill(os.getpid(), signal.SIGSTOP)
+    print('CTRL Z PRESSED')
+    target_pid = currentlyRunningProcess
+    print(str(target_pid))
+    if target_pid is not None:
+        os.kill(target_pid, signal.SIGSTOP)
 
 
 # Quits this shell
