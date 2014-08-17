@@ -58,21 +58,29 @@ class Command:
         else:
             if self.command in shellCommandList:
                 if self.is_part_of_pipe:
-                    if os.fork():
+                    child_pid = os.fork();
+                    if child_pid == 0:
                         os.dup2(self.fd_in, sys.stdin.fileno())
                         os.dup2(self.fd_out, sys.stdout.fileno())
                         shellCommands[self.command](self.arguments)
-                    elif not self.is_job:
+                    elif self.is_job:
+                        job_list.add_job(child_pid)
+                        job_list.print_all()
+                    else:
                         os.wait()
                 else:
                     shellCommands[self.command](self.arguments)
 
             else:
-                if os.fork() == 0:
+                child_pid = os.fork();
+                if child_pid == 0:
                     os.dup2(self.fd_in, sys.stdin.fileno())
                     os.dup2(self.fd_out, sys.stdout.fileno())
                     os.execvp(self.command, self.arguments)
-                elif not self.is_job:
+                elif self.is_job:
+                    job_list.add_job(child_pid)
+                    job_list.print_all()
+                else:
                     os.wait()
 
 
@@ -106,62 +114,54 @@ class CommandHistory:
 
 
 # This class represents a single background process.
-# class Job:
-#     def __init__(self, pid, unique_id):
-#         self.pid = pid
-#         self.unique_id = unique_id
-#
-#     def get_pid(self):
-#         return self.pid
-#
-#     def get_unique_id(self):
-#         return self.unique_id
-#
-#     def check_state(self):
-#         # Use provided code to get state of process.
-#         state = get_state_by_pid(self.pid)
-#         return state
-#
-#     def foreground(self):
-#         # Bring this process to the foreground.
-#         return
-#
-#     def background(self):
-#         # Send this process to the background.
-#         return
+class Job:
+    def __init__(self, pid, unique_id):
+        self.pid = pid
+        self.unique_id = unique_id
+
+    def get_pid(self):
+        return self.pid
+
+    def get_unique_id(self):
+        return self.unique_id
+
+    def check_state(self):
+        # Use provided code to get state of process.
+        state = get_state_by_pid(self.pid)
+        return state
+
+    def __str__(self):
+        return '[' + str(self.unique_id) + '] ' + str(self.pid)
 
 
 # This class manages the list of jobs (background processes).
-# class JobsList:
-#     def __init__(self):
-#         self.job_list = []
-#         self.next_unique_id = 1
-#
-#     def add_job(self, pid):
-#         job = Job(pid, self.next_unique_id)
-#         self.job_list.append(job)
-#         self.next_unique_id += 1
-#         return job
-#
-#     def remove_job(self, index):
-#         self.job_list.pop(index - 1)
-#
-#     def remove_job(self, job):
-#         self.job_list.remove(job)
-#
-#     def get_job(self, index):
-#         return self.job_list[index - 1]
-#
-#     def get_all_jobs(self):
-#         return self.job_list
-#
-#     def print_all(self):
-#         for job in self.job_list:
-#             print('[' + job.get_unique_id() + '] ' + job.get_pid())
-#
-#     @property
-#     def num_jobs(self):
-#         return len(self.job_list)
+class JobsList:
+    def __init__(self):
+        self.job_list = []
+        self.next_unique_id = 1
+
+    def add_job(self, pid):
+        job = Job(pid, self.next_unique_id)
+        self.job_list.append(job)
+        self.next_unique_id += 1
+        return job
+
+    def remove_job(self, job):
+        self.job_list.remove(job)
+
+    def get_job(self, index):
+        return self.job_list[index - 1]
+
+    def get_all_jobs(self):
+        return self.job_list
+
+    def print_all(self):
+        for job in self.job_list:
+            print(str(job))
+
+    @property
+    def num_jobs(self):
+        return len(self.job_list)
 
 
 # When the key combination CTRL+Z is pressed, the correct shell function is called.
@@ -172,7 +172,7 @@ def intercept_ctrl_z(signum, frame):
 shellCommandList = ['pwd', 'cd', 'h', 'history', 'bg', 'fg', 'kill', 'q', 'quit', 'exit', 'jobs']
 
 command_history = CommandHistory()
-# job_list = JobsList()
+job_list = JobsList()
 home_dir = os.getcwd()
 
 # Intercepts CTRL+Z key presses to perform our own functionality, rather than this shell being sent to background.
@@ -180,11 +180,10 @@ signal.signal(signal.SIGTSTP, intercept_ctrl_z)
 
 
 # Accepts user input, and runs the commands when they are entered.
-# noinspection PyProtectedMember
 def main():
     while 1:
         try:
-            #check_jobs()
+            check_jobs()
 
             user_input = input('psh> ')
             if user_input.strip() != '':
@@ -200,6 +199,19 @@ def main():
             print('')
         except EOFError:
             exit()
+
+
+#Finds jobs that have finished since the last loop of the main function, and prints the corresponding output.
+def check_jobs():
+    for job in job_list.get_all_jobs():
+        state = job.check_state()
+        if state is None:
+            job_list.remove_job(job)
+            print()
+        elif state == 'Z':
+            os.waitpid(job.get_pid(), 0)
+        else:
+            print("Job [" + str(job.get_pid()) + "] = " + state)
 
 
 # Saves the user's input in history, parses the string into is separate command[s] and arguments,
@@ -243,7 +255,6 @@ def do_full_command(user_input):
         command.set_is_job(False)
         if amper:
             command.set_is_job(True)
-            #TODO job_list.print_all()
         command.execute()
     return
 
@@ -297,17 +308,6 @@ def split_by_pipes(command_with_args):
     multiple_commands_with_args.append(Command(command_with_args[0], command_with_args))
 
     return multiple_commands_with_args
-
-#def check_jobs():
-    # for job in job_list.get_all_jobs():
-    #     state = job.check_state()
-    #     if state is None:
-    #         job_list.remove_job(job)
-    #         print()
-    #     elif state == 'Z':
-    #         os.wait()
-    #     else:
-    #         print("Job[" + str(job.get_pid()) + "] = " + state)
 
 
 # Shell command functions follow:
@@ -387,11 +387,7 @@ def sc_kill(arguments):
 
 # Forces a process to sleep/wait.
 def sc_ctrl_z():
-    target_pid = os.getpid()
-    job_list.add_job(Job(target_pid))
-    if len(arguments) > 1:
-        target_pid = int(arguments[1])
-    os.kill(target_pid, signal.SIGSTOP)
+    os.kill(os.getpid(), signal.SIGSTOP)
 
 
 # Quits this shell
@@ -401,7 +397,7 @@ def sc_q(arguments):
 
 # Lists the current background processes and their states
 def sc_jobs(arguments):
-    return arguments
+    job_list.print_all()
 
 
 # Uses the /proc/pid/state file to find the state of a process.
