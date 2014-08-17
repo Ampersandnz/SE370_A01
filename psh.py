@@ -58,28 +58,26 @@ class Command:
         else:
             if self.command in shellCommandList:
                 if self.is_part_of_pipe:
-                    child_pid = os.fork();
+                    child_pid = os.fork()
                     if child_pid == 0:
                         os.dup2(self.fd_in, sys.stdin.fileno())
                         os.dup2(self.fd_out, sys.stdout.fileno())
                         shellCommands[self.command](self.arguments)
                     elif self.is_job:
-                        job_list.add_job(child_pid)
-                        job_list.print_all()
+                        job_list.add_job(child_pid, self)
                     else:
                         os.wait()
                 else:
                     shellCommands[self.command](self.arguments)
 
             else:
-                child_pid = os.fork();
+                child_pid = os.fork()
                 if child_pid == 0:
                     os.dup2(self.fd_in, sys.stdin.fileno())
                     os.dup2(self.fd_out, sys.stdout.fileno())
                     os.execvp(self.command, self.arguments)
                 elif self.is_job:
-                    job_list.add_job(child_pid)
-                    job_list.print_all()
+                    job_list.add_job(child_pid, self)
                 else:
                     os.wait()
 
@@ -115,15 +113,19 @@ class CommandHistory:
 
 # This class represents a single background process.
 class Job:
-    def __init__(self, pid, unique_id):
+    def __init__(self, pid, unique_id, command):
         self.pid = pid
         self.unique_id = unique_id
+        self.command = command
 
     def get_pid(self):
         return self.pid
 
     def get_unique_id(self):
         return self.unique_id
+
+    def get_command(self):
+        return self.command
 
     def check_state(self):
         # Use provided code to get state of process.
@@ -140,10 +142,17 @@ class JobsList:
         self.job_list = []
         self.next_unique_id = 1
 
-    def add_job(self, pid):
-        job = Job(pid, self.next_unique_id)
+    def add_job(self, pid, command):
+        self.next_unique_id = 1
+
+        for job in self.job_list:
+            if job.get_unique_id() == self.next_unique_id:
+                self.next_unique_id += 1
+
+        job = Job(pid, self.next_unique_id, command)
         self.job_list.append(job)
-        self.next_unique_id += 1
+
+        print('[' + str(self.next_unique_id) + '] ' + str(pid))
         return job
 
     def remove_job(self, job):
@@ -158,6 +167,15 @@ class JobsList:
     def print_all(self):
         for job in self.job_list:
             print(str(job))
+
+    def print_all_full(self):
+        for job in self.job_list:
+            if job is not None and job.get_command() is not None:
+                unique_id = str(job.get_unique_id())
+                process_id = str(job.get_pid())
+                state = job.check_state()
+                command = str(job.get_command())
+                print ('[' + unique_id + '] : ' + process_id + ' - ' + state + '    ' + command)
 
     @property
     def num_jobs(self):
@@ -193,8 +211,15 @@ def main():
                 # Otherwise there would be two running instances of the shell.
                 except FileNotFoundError:
                     print (parse_input(user_input)[0] + ': command not found')
+                    exit()
                 except IndexError:
                     print("Invalid input")
+                    exit()
+                except ValueError:
+                    print('Invalid use of pipe \"|\".')
+                    exit()
+                except OSError:
+                    exit()
         except KeyboardInterrupt:
             print('')
         except EOFError:
@@ -207,11 +232,9 @@ def check_jobs():
         state = job.check_state()
         if state is None:
             job_list.remove_job(job)
-            print()
-        elif state == 'Z':
+            print("[" + str(job.get_pid()) + "]+ Done " + str(job.get_command()))
+        elif state is 'Z':
             os.waitpid(job.get_pid(), 0)
-        else:
-            print("Job [" + str(job.get_pid()) + "] = " + state)
 
 
 # Saves the user's input in history, parses the string into is separate command[s] and arguments,
@@ -247,8 +270,10 @@ def do_full_command(user_input):
             commands_to_pipe = split_by_pipes(command_with_args)
             pipe_commands(commands_to_pipe)
 
-        elif not amper:
-            os.wait()
+        else:
+            job_list.add_job(child_pid, add_to_history)
+            if not amper:
+                os.wait()
 
     #Only one command to execute.
     else:
@@ -304,8 +329,9 @@ def split_by_pipes(command_with_args):
         # Remove first command, its arguments, and the following pipe from the original list of strings.
         del command_with_args[:index_of_first_pipe + 1]
 
-    # Add last command and its arguments to the list.
-    multiple_commands_with_args.append(Command(command_with_args[0], command_with_args))
+    if command_with_args[0] is not None:
+        # Add last command and its arguments to the list.
+        multiple_commands_with_args.append(Command(command_with_args[0], command_with_args))
 
     return multiple_commands_with_args
 
@@ -365,6 +391,7 @@ def sc_h(arguments):
 def sc_bg(arguments):
     target_pid = os.getpid()
     if len(arguments) > 1:
+        print('Argument to bg was: ' + str(arguments[1]))
         target_pid = int(arguments[1])
     os.kill(target_pid, signal.SIGCONT)
 
@@ -373,6 +400,7 @@ def sc_bg(arguments):
 def sc_fg(arguments):
     target_pid = os.getpid()
     if len(arguments) > 1:
+        print('Argument to fg was: ' + str(arguments[1]))
         target_pid = int(arguments[1])
     os.kill(target_pid, signal.SIGCONT)
 
@@ -381,6 +409,7 @@ def sc_fg(arguments):
 def sc_kill(arguments):
     target_pid = os.getpid()
     if len(arguments) > 1:
+        print('Argument to kill was: ' + str(arguments[1]))
         target_pid = int(arguments[1])
     os.kill(target_pid, signal.SIGKILL)
 
@@ -397,7 +426,7 @@ def sc_q(arguments):
 
 # Lists the current background processes and their states
 def sc_jobs(arguments):
-    job_list.print_all()
+    job_list.print_all_full()
 
 
 # Uses the /proc/pid/state file to find the state of a process.
