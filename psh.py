@@ -19,11 +19,11 @@ class Command:
     def __init__(self, command, arguments):
         self.command = command
         self.arguments = arguments
-        if len(self.arguments) == 0:
-            self.arguments = [command]
         self.fd_in = sys.stdin.fileno()
         self.fd_out = sys.stdout.fileno()
         self.is_job = False
+        self.is_part_of_pipe = False
+        self.history_with_pipe = '|' in arguments
 
     def get_command(self):
         return self.command
@@ -32,7 +32,10 @@ class Command:
         return self.arguments
 
     def __str__(self):
-        return str(self.command) + ' '.join(self.arguments)
+        to_string = " ".join(self.arguments)
+        if self.is_job:
+            to_string += " &"
+        return to_string
 
     def set_fd_in(self, fd_in):
         self.fd_in = fd_in
@@ -43,18 +46,34 @@ class Command:
     def set_is_job(self, is_job):
         self.is_job = is_job
 
-    def execute(self):
+    def set_is_part_of_pipe(self, is_part_of_pipe):
+        self.is_part_of_pipe = is_part_of_pipe
 
-        if self.command in shellCommandList:
-            shellCommands[self.command](self.arguments)
+    def set_history_with_pipe(self, history_with_pipe):
+        self.history_with_pipe = history_with_pipe
+
+    def execute(self):
+        if self.history_with_pipe:
+            do_full_command(str(self))
         else:
-            if os.fork() == 0:
-                print('calling command: ' + self.command)
-                os.dup2(self.fd_in, sys.stdin.fileno())
-                os.dup2(self.fd_out, sys.stdout.fileno())
-                os.execvp(self.command, self.arguments)
-            elif not self.is_job:
-                os.wait()
+            if self.command in shellCommandList:
+                if self.is_part_of_pipe:
+                    if os.fork():
+                        os.dup2(self.fd_in, sys.stdin.fileno())
+                        os.dup2(self.fd_out, sys.stdout.fileno())
+                        shellCommands[self.command](self.arguments)
+                    elif not self.is_job:
+                        os.wait()
+                else:
+                    shellCommands[self.command](self.arguments)
+
+            else:
+                if os.fork() == 0:
+                    os.dup2(self.fd_in, sys.stdin.fileno())
+                    os.dup2(self.fd_out, sys.stdout.fileno())
+                    os.execvp(self.command, self.arguments)
+                elif not self.is_job:
+                    os.wait()
 
 
 # This class manages the list of recently entered input strings.
@@ -115,30 +134,34 @@ class CommandHistory:
 # This class manages the list of jobs (background processes).
 # class JobsList:
 #     def __init__(self):
-#         self.jobList = []
+#         self.job_list = []
 #         self.next_unique_id = 1
 #
 #     def add_job(self, pid):
 #         job = Job(pid, self.next_unique_id)
-#         self.jobList.append(job)
+#         self.job_list.append(job)
 #         self.next_unique_id += 1
 #         return job
 #
 #     def remove_job(self, index):
-#         self.jobList.pop(index - 1)
+#         self.job_list.pop(index - 1)
 #
 #     def remove_job(self, job):
-#         self.jobList.remove(job)
+#         self.job_list.remove(job)
 #
 #     def get_job(self, index):
-#         return self.jobList[index - 1]
+#         return self.job_list[index - 1]
 #
 #     def get_all_jobs(self):
-#         return self.jobList
+#         return self.job_list
+#
+#     def print_all(self):
+#         for job in self.job_list:
+#             print('[' + job.get_unique_id() + '] ' + job.get_pid())
 #
 #     @property
 #     def num_jobs(self):
-#         return len(self.jobList)
+#         return len(self.job_list)
 
 
 # When the key combination CTRL+Z is pressed, the correct shell function is called.
@@ -183,12 +206,20 @@ def main():
 # then determines if a given command with arguments should be executed by the shell or the system.
 def do_full_command(user_input):
     command_with_args = parse_input(user_input)
-    command = Command(command_with_args[0], command_with_args)
-
-    command_history.add_command(Command(command, command_with_args))
 
     amper = '&' in command_with_args
     piping = '|' in command_with_args
+
+    add_to_history = Command(command_with_args[0], command_with_args)
+
+    if amper:
+        add_to_history.set_is_job(True)
+    if piping:
+        add_to_history.set_history_with_pipe(True)
+
+    command_history.add_command(add_to_history)
+
+    command = add_to_history
 
     if amper:
         # We know there was an ampersand in the input, it doesn't need to be passed in as an argument to a program.
@@ -209,6 +240,10 @@ def do_full_command(user_input):
 
     #Only one command to execute.
     else:
+        command.set_is_job(False)
+        if amper:
+            command.set_is_job(True)
+            #TODO job_list.print_all()
         command.execute()
     return
 
@@ -222,11 +257,13 @@ def pipe_commands(commands_to_pipe):
         command.set_fd_in(old_read)
         command.set_fd_out(new_write)
         command.set_is_job(True)
+        command.set_is_part_of_pipe(True)
         command.execute()
 
         old_read = new_read
 
     commands_to_pipe[-1].set_is_job(True)
+    commands_to_pipe[-1].set_is_part_of_pipe(True)
     commands_to_pipe[-1].set_fd_in(old_read)
     commands_to_pipe[-1].execute()
 
@@ -317,7 +354,10 @@ def sc_h(arguments):
         command = command_history.get_command(int(arguments[1]))
 
         # Remove the h <num> call from the history list; it will be replaced by the actual command executed.
-        command_history.remove_command(command_history.num_commands)
+        if command.history_with_pipe:
+            command_history.remove_command(command_history.num_commands)
+        else:
+            command_history.set_command(command_history.num_commands, command)
         command.execute()
 
 
